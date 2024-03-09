@@ -16,31 +16,6 @@ static const int CONNECT_BIT = BIT0;
 static const int GOT_DATA_BIT = BIT2;
 static const int USB_DISCONNECTED_BIT = BIT3; // Used only with USB DTE but we define it unconditionally, to avoid too many #ifdefs in the code
 
-#ifdef CONFIG_EXAMPLE_MODEM_DEVICE_CUSTOM
-esp_err_t esp_modem_get_time(esp_modem_dce_t *dce_wrap, char *p_time);
-#endif
-
-#if defined(CONFIG_EXAMPLE_SERIAL_CONFIG_USB)
-#include "esp_modem_usb_c_api.h"
-#include "esp_modem_usb_config.h"
-#include "freertos/task.h"
-static void usb_terminal_error_handler(esp_modem_terminal_error_t err)
-{
-    if (err == ESP_MODEM_TERMINAL_DEVICE_GONE) {
-        ESP_LOGI(TAG, "USB modem disconnected");
-        assert(event_group);
-        xEventGroupSetBits(event_group, USB_DISCONNECTED_BIT);
-    }
-}
-#define CHECK_USB_DISCONNECTION(event_group) \
-if ((xEventGroupGetBits(event_group) & USB_DISCONNECTED_BIT) == USB_DISCONNECTED_BIT) { \
-    esp_modem_destroy(dce); \
-    continue; \
-}
-#else
-#define CHECK_USB_DISCONNECTION(event_group)
-#endif
-
 #include "driver/gpio.h"
 void esp_modem_hard_reset()
 {
@@ -179,18 +154,6 @@ void app_main(void)
     xEventGroupClearBits(event_group, CONNECT_BIT | GOT_DATA_BIT | USB_DISCONNECTED_BIT);
 
     /* Run the modem demo app */
-#if CONFIG_EXAMPLE_NEED_SIM_PIN == 1
-    // check if PIN needed
-    bool pin_ok = false;
-    if (esp_modem_read_pin(dce, &pin_ok) == ESP_OK && pin_ok == false) {
-        if (esp_modem_set_pin(dce, CONFIG_EXAMPLE_SIM_PIN) == ESP_OK) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        } else {
-            abort();
-        }
-    }
-#endif
-
     int rssi, ber;
     esp_err_t err = esp_modem_get_signal_quality(dce, &rssi, &ber);
     if (err != ESP_OK) {
@@ -198,31 +161,6 @@ void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "Signal quality: rssi=%d, ber=%d", rssi, ber);
-
-#ifdef CONFIG_EXAMPLE_MODEM_DEVICE_CUSTOM
-    {
-        char time[64];
-        err = esp_modem_get_time(dce, time);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "esp_modem_get_time failed with %d %s", err, esp_err_to_name(err));
-            return;
-        }
-        ESP_LOGI(TAG, "esp_modem_get_time: %s", time);
-    }
-#endif
-
-#if CONFIG_EXAMPLE_SEND_MSG
-    if (esp_modem_sms_txt_mode(dce, true) != ESP_OK || esp_modem_sms_character_set(dce) != ESP_OK) {
-        ESP_LOGE(TAG, "Setting text mode or GSM character set failed");
-        return;
-    }
-
-    err = esp_modem_send_sms(dce, CONFIG_EXAMPLE_SEND_MSG_PEER_PHONE_NUMBER, "Text message from esp-modem");
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_modem_send_sms() failed with %d", err);
-        return;
-    }
-#endif
 
     err = esp_modem_set_mode(dce, ESP_MODEM_MODE_DATA);
     if (err != ESP_OK) {
@@ -232,25 +170,17 @@ void app_main(void)
     /* Wait for IP address */
     ESP_LOGI(TAG, "Waiting for IP address");
     xEventGroupWaitBits(event_group, CONNECT_BIT | USB_DISCONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
-    CHECK_USB_DISCONNECTION(event_group);
 
     /* Config MQTT */
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
     esp_mqtt_client_config_t mqtt_config = {
         .broker.address.uri = CONFIG_EXAMPLE_MQTT_BROKER_URI,
     };
-#else
-    esp_mqtt_client_config_t mqtt_config = {
-        .uri = CONFIG_EXAMPLE_MQTT_BROKER_URI,
-    };
-#endif
     esp_mqtt_client_handle_t mqtt_client = esp_mqtt_client_init(&mqtt_config);
     esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     esp_mqtt_client_start(mqtt_client);
     ESP_LOGI(TAG, "Waiting for MQTT data");
     xEventGroupWaitBits(event_group, GOT_DATA_BIT | USB_DISCONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
-    CHECK_USB_DISCONNECTION(event_group);
-
+    
     esp_mqtt_client_destroy(mqtt_client);
     err = esp_modem_set_mode(dce, ESP_MODEM_MODE_COMMAND);
     if (err != ESP_OK) {
