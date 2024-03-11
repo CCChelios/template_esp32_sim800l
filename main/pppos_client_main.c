@@ -16,6 +16,9 @@ static const int CONNECT_BIT = BIT0;
 static const int GOT_DATA_BIT = BIT2;
 static const int USB_DISCONNECTED_BIT = BIT3; // Used only with USB DTE but we define it unconditionally, to avoid too many #ifdefs in the code
 
+extern const uint8_t mqtt_eclipseprojects_io_pem_start[]   asm("_binary_root_certificate_hivemq_pem_start");
+extern const uint8_t mqtt_eclipseprojects_io_pem_end[]   asm("_binary_root_certificate_hivemq_pem_end");
+
 #include "driver/gpio.h"
 void esp_modem_hard_reset()
 {
@@ -172,8 +175,11 @@ void app_main(void)
     xEventGroupWaitBits(event_group, CONNECT_BIT | USB_DISCONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
 
     /* Config MQTT */
-    esp_mqtt_client_config_t mqtt_config = {
-        .broker.address.uri = CONFIG_EXAMPLE_MQTT_BROKER_URI,
+    const esp_mqtt_client_config_t mqtt_config = {
+        .broker = {
+            .address.uri = CONFIG_EXAMPLE_MQTT_BROKER_URI,
+            .verification.certificate = (const char *)mqtt_eclipseprojects_io_pem_start
+        },
     };
     esp_mqtt_client_handle_t mqtt_client = esp_mqtt_client_init(&mqtt_config);
     esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);

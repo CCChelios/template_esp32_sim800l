@@ -4,3 +4,5 @@ cmake_minimum_required(VERSION 3.5)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(pppos_client)
+
+target_add_binary_data(pppos_client.elf "main/root_certificate_hivemq.pem" TEXT)
